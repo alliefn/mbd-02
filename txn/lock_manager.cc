@@ -5,9 +5,11 @@
 // 'The Case for Determinism in Database Systems'.
 
 #include <deque>
-
+#include <iostream>
 #include "txn/lock_manager.h"
 
+
+using namespace std;
 using std::deque;
 
 LockManager::~LockManager() {
@@ -17,11 +19,16 @@ LockManager::~LockManager() {
   }
 }
 
+
+/**
+ Mendapatkan deque dgn key = key atau membuatnya jika blm ada
+*/
 deque<LockManager::LockRequest>* LockManager::_getLockQueue(const Key& key) {
-  deque<LockRequest> *dq = lock_table_[key];
+  deque<LockRequest> *dq = this->lock_table_[key];
   if (!dq) {
+    // cout << "\tBuat Deque baru"<<endl;
     dq = new deque<LockRequest>();
-    lock_table_[key] = dq;
+    this->lock_table_[key] = dq;
   }
   return dq;
 }
@@ -29,59 +36,82 @@ deque<LockManager::LockRequest>* LockManager::_getLockQueue(const Key& key) {
 LockManagerA::LockManagerA(deque<Txn*>* ready_txns) {
   ready_txns_ = ready_txns;
 }
-
 bool LockManagerA::WriteLock(Txn* txn, const Key& key) {
-  bool empty = true;
-  LockRequest rq(EXCLUSIVE, txn);
-  deque<LockRequest> *dq = _getLockQueue(key);
 
-  empty = dq->empty();
-  dq->push_back(rq);
+  // Txn buat request lock exclusive
+  LockRequest lreq(EXCLUSIVE, txn);
 
-  if (!empty) { // Add to wait list, doesn't own lock.
-    txn_waits_[txn]++;
+  // Mendapatkan deque dgn key = key atau membuatnya jika blm ada
+  deque<LockRequest> *deque = _getLockQueue(key);
+
+  deque->push_back(lreq);
+
+  if (deque->size() == 1) { // Berarti bisa langsung diberikan locknya (immediately granted)
+    // cout << "\tWrite Lock dapat langsung diberikan" << endl;
+    return true;
+  }else{
+    // increment txn_waits untuk txn
+    this->txn_waits_[txn]++;
   }
-  return empty;
+  // cout << "\tWrite Lock tidak dapat langsung diberikan" << endl;
+  return false;
 }
 
 bool LockManagerA::ReadLock(Txn* txn, const Key& key) {
-  // Since Part 1A implements ONLY exclusive locks, calls to ReadLock can
-  // simply use the same logic as 'WriteLock'.
-  return WriteLock(txn, key);
+  // Txn buat request lock exclusive
+  LockRequest lreq(EXCLUSIVE, txn);
+
+  // Mendapatkan deque dgn key = key atau membuatnya jika blm ada
+  deque<LockRequest> *deque = _getLockQueue(key);
+
+  deque->push_back(lreq);
+
+  if (deque->size() == 1) { // Berarti bisa langsung diberikan locknya (immediately granted)
+    // cout << "\tRead Lock dapat langsung diberikan" << endl;
+    return true;
+  }else{
+    // increment txn_waits untuk txn
+    this->txn_waits_[txn]++;
+  }
+  // cout << "\tRead Lock tidak dapat langsung diberikan" << endl;
+  return false;
 }
 
 void LockManagerA::Release(Txn* txn, const Key& key) {
-  deque<LockRequest> *queue = _getLockQueue(key);
-  bool removedOwner = true; // Is the lock removed the lock owner?
+  
+  // Mendapatkan deque dgn key = key atau membuatnya jika blm ada
+  deque<LockRequest> *deque = _getLockQueue(key);
 
-  // Delete the txn's exclusive lock.
-  for (auto it = queue->begin(); it < queue->end(); it++) {
-    if (it->txn_ == txn) { // TODO is it ok to just compare by address?
-        queue->erase(it);
-        break;
-    }
-    removedOwner = false;
-  }
-
-  if (!queue->empty() && removedOwner) {
-    // Give the next transaction the lock
-    LockRequest next = queue->front();
-
-    if (--txn_waits_[next.txn_] == 0) {
-        ready_txns_->push_back(next.txn_);
-        txn_waits_.erase(next.txn_);
+  // cek jika txn di front queue  
+  if (deque->front().txn_ == txn){
+    // cout << "\tHapus front txn dari deque/lock table" << endl;
+    deque->pop_front();
+    // jika masih transaksi di lock table maka masukkan ke ready transaksi
+    if (deque->size() > 0){
+      // cout << "\tMasukkan ke ready_txn next front" << endl;
+      this->ready_txns_->push_back(deque->front().txn_);
+    } 
+  }else{ // jika tidak di front queue maka tinggal hapus saja 
+    for (auto iter = deque->begin(); iter < deque->end(); iter++) {
+      if (iter->txn_ == txn) { 
+          // cout << "\tHapus txn dari lock table" << endl;
+          deque->erase(iter);
+          break;
+      }
     }
   }
 }
 
 LockMode LockManagerA::Status(const Key& key, vector<Txn*>* owners) {
-  deque<LockRequest> *dq = _getLockQueue(key);
-  if (dq->empty()) {
+  
+  deque<LockRequest> *deque = _getLockQueue(key);
+  if (deque->size() == 0) {
+    // cout << "\tStatus UNLOCKED" << endl;
     return UNLOCKED;
-  } else {
-    vector<Txn*> _owners;
-    _owners.push_back(dq->front().txn_);
-    *owners = _owners;
+  }else {
+    owners->clear();
+    owners->push_back(deque->front().txn_);
+    // cout << "\tStatus EXCLUSIVE" << endl;
     return EXCLUSIVE;
   }
 }
@@ -176,3 +206,7 @@ LockMode LockManagerB::Status(const Key& key, vector<Txn*>* owners) {
 inline bool LockManagerB::_noExclusiveWaiting(const Key& key) {
   return _numExclusiveWaiting[key] == 0;
 }
+
+
+
+
