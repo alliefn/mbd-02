@@ -260,63 +260,71 @@ void TxnProcessor::ApplyWrites(Txn* txn) {
   }
 }
 
-/**
- * Precondition: No storage writes are occuring during execution.
- */
-bool TxnProcessor::OCCValidateTransaction(const Txn &txn) const {
-  // Check
-  for (auto&& key : txn.readset_) {
-    if (txn.occ_start_time_ < storage_->Timestamp(key))
-      return false;
-  }
-
-  for (auto&& key : txn.writeset_) {
-    if (txn.occ_start_time_ < storage_->Timestamp(key))
-      return false;
-  }
-
-  return true;
-}
 
 void TxnProcessor::RunOCCScheduler() {
-  // Fetch transaction requests, and immediately begin executing them.
+  // Dapatkan request transaksi baru selanjutnya (bila ada yang pending) dan masukkan ke dalam execution thread
   while (tp_.Active()) {
-    Txn *txn;
+    Txn *txn, *txn2;
+    
     if (txn_requests_.Pop(&txn)) {
+      // Begin phase
+		  // Catat start time transaksi
 
-      // Start txn running in its own thread.
-      tp_.RunTask(new Method<TxnProcessor, void, Txn*>(
-                  this,
-                  &TxnProcessor::ExecuteTxn,
-                  txn));
+      // Read and execution (modify) phase
+      // Pada execution thread, jalankan operasi (read/write) yang ada pada transaksi txn
+      tp_.RunTask(new Method<TxnProcessor, void, Txn*>(this, &TxnProcessor::ExecuteTxn, txn));
     }
 
-    // Validate completed transactions, serially
-    Txn *finished;
-    while (completed_txns_.Pop(&finished)) {
-      if (finished->Status() == COMPLETED_A) {
-        finished->status_ = ABORTED;
+    // Untuk transaksi yang sudah selesai (akan commit), lakukan tahap validation (validation  test)
+    while (completed_txns_.Pop(&txn2)) {
+      if (txn2->Status() == COMPLETED_A) {
+          txn2->status_ = ABORTED;
       } else {
-        bool valid = OCCValidateTransaction(*finished);
-        if (!valid) {
-          // Cleanup and restart
-          finished->reads_.empty();
-          finished->writes_.empty();
-          finished->status_ = INCOMPLETE;
+          // Validation phase
+          // Lakukan pengecekan untuk setiap data yang berada pada read dan write set dari transaksi
+          // pada validation test, tidak dibolehkan ada perubahan pada database 
+          // jika perubahan data terakhir dilakukan setelah transaksi dimulai
+			    // maka validasi gagal
 
-          mutex_.Lock();
-          txn->unique_id_ = next_unique_id_;
-          next_unique_id_++;
-          txn_requests_.Push(finished);
-          mutex_.Unlock();
-        } else {
-          // Commit the transaction
-          ApplyWrites(finished);
-          txn->status_ = COMMITTED;
-        }
+          // inisialisasi validasi berhasil
+          bool validate = true;
+
+          // pengecekan read set
+          for (auto&& item : txn2->readset_) {
+            if (txn2->occ_start_time_ < storage_->Timestamp(item)) validate = false;
+          }
+
+          // pengecekan write set
+          for (auto&& item : txn2->writeset_) {
+            if (txn2->occ_start_time_ < storage_->Timestamp(item)) validate = false;
+          }
+
+          // Write phase (commit/restart)
+          // jika validasi berhasil, lakukan penulisan data pada database dan commit transaksi
+          if (validate) {
+              // aplikasikan perubahan (lakukan penulisan) data pada database dengan memanggil fungsi ApplyWrites
+              ApplyWrites(txn2);
+
+              // Tandai transaksi menjadi sudah commit dengan mengubah status transaksi menjadi COMMITTED
+              txn->status_ = COMMITTED;
+            
+          // jika terdapat transaksi lain (yang konkuren) yang telah melakukan modifikasi terhadap data yang akan ditulis, 
+          // maka validasi gagal dan transaksi akan di rollback (hapus operasi yang sudah dijalankan dan mulai ulang tranksasi)
+          } else {
+              // hapus operasi (read/write) yang sudah dijalankan dan ubah status transaksi menjadi INCOMPLETE
+              txn2->reads_.empty();
+              txn2->writes_.empty();
+              txn2->status_ = INCOMPLETE;
+
+              // Mulai ulang transaksi
+              this->mutex_.Lock();
+              txn->unique_id_ = next_unique_id_;
+              next_unique_id_++;
+              this->txn_requests_.Push(txn2);
+              this->mutex_.Unlock();
+          }
       }
-
-      txn_results_.Push(finished);
+      this->txn_results_.Push(txn2);
     }
   }
 }
