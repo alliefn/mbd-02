@@ -47,8 +47,34 @@ bool MVCCStorage::Read(Key key, Value* result, int txn_unique_id) {
   
   // Hint: Iterate the version_lists and return the verion whose write timestamp
   // (version_id) is the largest write timestamp less than or equal to txn_unique_id.
-  
-  return true;
+
+  // If there exists a record for the specified key, sets '*result' equal to
+  // the value associated with the key and returns true, else returns false;
+  // The third parameter is the txn_unique_id(txn timestamp), which is used for MVCC.
+  if (!mvcc_data_.count(key)) {
+    return false;
+  }
+
+  // get maximum version ID
+  int maxID = 0;
+  for (auto& elm : *mvcc_data_[key]) {
+    int currID = elm->version_id_;
+    if (currID <= txn_unique_id && currID > maxID) {
+      maxID = currID;
+    };
+  }
+
+  for (auto& elm : *mvcc_data_[key]) {
+    if (elm->version_id_ == maxID) {
+      if (elm->max_read_id_ < txn_unique_id) {
+        elm->max_read_id_ = txn_unique_id;
+      }
+      *result = elm->value_;
+      return true;
+    }
+  }
+
+  return false;
 }
 
 
@@ -65,7 +91,27 @@ bool MVCCStorage::CheckWrite(Key key, int txn_unique_id) {
   // Note that you don't have to call Lock(key) in this method, just
   // call Lock(key) before you call this method and call Unlock(key) afterward.
   
-  
+  // periksa jika ada
+  if (!mvcc_data_.count(key)) {
+    return false;
+  }
+
+  // get maximum version ID
+  int maxID = 0;
+  for (auto& elm : *mvcc_data_[key]) {
+    int currID = elm->version_id_;
+    if (currID <= txn_unique_id && currID > maxID) {
+      maxID = currID;
+    };
+  }
+
+  // check one key
+  for (auto elm : *mvcc_data_[key]) {
+    if (elm->version_id_ == maxID) {
+      return (elm->max_read_id_ <= txn_unique_id);
+    }
+  }
+
   return true;
 }
 
@@ -79,6 +125,39 @@ void MVCCStorage::Write(Key key, Value value, int txn_unique_id) {
   // into the version_lists. Note that InitStorage() also calls this method to init storage. 
   // Note that you don't have to call Lock(key) in this method, just
   // call Lock(key) before you call this method and call Unlock(key) afterward.
+  if (mvcc_data_.count(key)) {
+
+    // get maximum version ID
+    int maxID = 0;
+    for (auto& elm : *mvcc_data_[key]) {
+      int currID = elm->version_id_;
+      if (currID <= txn_unique_id && currID > maxID) {
+        maxID = currID;
+      };
+    }
+
+    for (auto& elm : *mvcc_data_[key]) {
+      // Misalkan terdapat TS(Ti) = W-TS(Qk) sehingga
+      // cukup perlu overwrite konten saja
+      if (elm->version_id_ == maxID && maxID == txn_unique_id) {
+        // overwrite konten, lalu kembali
+        elm->value_ = value;
+        return;
+      }
+    }
+  } else {
+    // insert data baru
+    mvcc_data_[key] = new std::deque<Version*>;
+  }
+
+  // struct untuk data baru
+  Version *new_version = new Version;
+
+  // Version {value_, max_read_id_, version_id_}
+  *new_version = Version {value, txn_unique_id, txn_unique_id};
+
+  // push ke mvcc_data_[key]
+  mvcc_data_[key]->push_back(new_version);
 }
 
 
