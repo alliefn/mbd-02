@@ -359,6 +359,124 @@ void TxnProcessor::RunMVCCScheduler() {
   //
   // [For now, run serial scheduler in order to make it through the test
   // suite]
-  RunSerialScheduler();
+
+  Txn *txn;
+
+  while (tp_.Active()) {
+
+    // Ambil elemen pertama dari transaksi (Lalu hapus dari transaksi),
+    // segera lanjutkan ke prosedur MVCCExecuteTxn untuk mengeksekusinya
+    if (txn_requests_.Pop(&txn)) {
+
+      // Jalankan prosedur TxnProcessor::MVCCExecuteTxn untuk memproses transaksi
+      tp_.RunTask(new Method<TxnProcessor, void, Txn*>(this, &TxnProcessor::MVCCExecuteTxn, txn));
+    }
+  }
 }
 
+void TxnProcessor::MVCCExecuteTxn(Txn* txn) {
+
+  // Create a procedure to read elements from a particular set.
+  /* auto readElm = [&](set<Key>& curset) -> void {
+    for (auto& element : curset) {
+      // Iff record exist in storage, save it to each read result.
+      Value result;
+      storage_->Lock(element);
+      if (storage_->Read(element, &result, txn->unique_id_))
+        txn->reads_[element] = result;
+      storage_->Unlock(element);
+    }
+  };
+
+  // Baca semua data untuk transaksi dari storage
+  readElm(txn->readset_), readElm(txn->writeset_); */
+
+  // Baca seluruh data yang diperlukan untuk transaksi ini
+  // dari storage (Untuk writeset_)
+  for (auto& elm : txn->readset_ ) {
+    Value result;
+    storage_->Lock(elm);
+
+    // Save to each read result if record exist (and vice versa) in storage
+    if (storage_->Read(elm, &result, txn->unique_id_))
+      // reads_ ialah results of reads performed by the transaction.
+      txn->reads_[elm] = result;
+    storage_->Unlock(elm);
+  }
+
+  // Baca seluruh data yang diperlukan untuk transaksi ini
+  // dari storage (Untuk writeset_)
+  for (auto& elm : txn->writeset_ ) {
+    Value result;
+    storage_->Lock(elm);
+
+    // Save to each read result if record exist (and vice versa) pada storage
+    if (storage_->Read(elm, &result, txn->unique_id_))
+      // reads_ ialah results of reads performed by the transaction.
+      txn->reads_[elm] = result;
+    storage_->Unlock(elm);
+  }
+
+  // Execute logic dari transaksi dengan melakukan Run()
+  txn->Run();
+
+  // Dalam hal ada transaksi yang 'dianggap'
+  // telah selesai, pindahkan lagi ke thread RunScheduler
+  completed_txns_.Push(txn);
+
+  // Dapatkan semua kunci untuk write_set_
+  MVCCLockWriteKeys(txn);
+
+  // Call MVCCStorage::CheckWrite method to check all keys in the write_set_
+  if (MVCCCheckWrites(txn)) {
+    // Jika key melewati pemeriksaan apakah bisa write...
+
+    // Lakukan write...
+    ApplyWrites(txn);
+
+    // ...lalu lepaskan semua kunci pada write_set_
+    MVCCUnlockWriteKeys(txn);
+
+    // Tandai bahwa transaksi
+    // selesai dan push ke hasil txn
+    txn->status_ = COMMITTED;
+    txn_results_.Push(txn);
+
+  } else {
+    // Bila ada key yang tidak lolos pemeriksaan...
+
+    // ...lepaskan semua lock pada write_set_
+    MVCCUnlockWriteKeys(txn);
+
+    // Bersihkan txn
+    txn->reads_.clear();
+    txn->writes_.clear();
+    txn->status_ = INCOMPLETE;
+
+    // Mulai ulang transaksi
+    mutex_.Lock();
+    txn->unique_id_ = next_unique_id_++;
+    txn_requests_.Push(txn);
+    mutex_.Unlock();
+  }
+}
+
+bool TxnProcessor::MVCCCheckWrites(Txn* txn) {
+  for (auto& elm : txn->writeset_) {
+    if (storage_->CheckWrite(elm, txn->unique_id_))
+      return true;
+  }
+  return false;
+}
+
+void TxnProcessor::MVCCLockWriteKeys(Txn* txn) {
+  for (auto& elm : txn->writeset_) {
+    storage_->Lock(elm);
+  }
+}
+
+void TxnProcessor::MVCCUnlockWriteKeys(Txn* txn) {
+  for (auto& elm : txn->writeset_) {
+    storage_->Unlock(elm);
+  }
+}
