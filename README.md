@@ -10,12 +10,23 @@ make test
 ```
 
 # Multiversion Timestamp Ordering Concurrency Control (MVCC)
-Implementation Simple Locking (exclusive locks only) DBMS Menggunakan Bahasa C++
+Implementation Multiversion Timestamp Ordering Concurrency Control DBMS Menggunakan Bahasa Python
 <br><br>
 Untuk menjalankan hasil implementasi, ketik perintah berikut pada terminal ubuntu
 ```
-make test
+python main.py
 ```
+## File test.txt pada MVCC
+Format pada transaksi test.txt ialah:
+
+1. Untuk read: 1r0.
+Makna: Transaksi 1 melakukan read pada 0
+
+2. Untuk write: 2w0,300
+Makna: Transaksi 2 melakukan write pada 0 yaitu 300
+
+Setiap instruksi dipisahkan dengan tanda spasi.
+Maksimum elemen (Untuk dibaca/ditulis) yang dapat ditampung ialah 20 (Bisa diubah pada main.py di cc = CC("test.txt", **20**))
 
 # Serial Optimistic Concurrency Control (OCC)
 Implementation Multiversion Timestamp Ordering Concurrency Control DBMS Menggunakan Bahasa C++
