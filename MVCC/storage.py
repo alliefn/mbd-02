@@ -43,12 +43,6 @@ class Storage:
                 version = currVer
         return version
 
-    def findBiggestIDX(self):
-        '''
-            Method untuk mengembalikan indeks
-        '''
-        return len(self.data)
-
     def findBiggestwriteTS(self,timestamp,key):
         '''
             Method to find idx that denote the version of Q
