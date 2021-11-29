@@ -268,7 +268,7 @@ void TxnProcessor::RunOCCScheduler() {
     
     if (txn_requests_.Pop(&txn)) {
       // Begin phase
-		  // Catat start time transaksi
+	    // Catat start time transaksi
 
       // Read and execution (modify) phase
       // Pada execution thread, jalankan operasi (read/write) yang ada pada transaksi txn
@@ -284,19 +284,25 @@ void TxnProcessor::RunOCCScheduler() {
           // Lakukan pengecekan untuk setiap data yang berada pada read dan write set dari transaksi
           // pada validation test, tidak dibolehkan ada perubahan pada database 
           // jika perubahan data terakhir dilakukan setelah transaksi dimulai
-			    // maka validasi gagal
+		      // maka validasi gagal
 
           // inisialisasi validasi berhasil
           bool validate = true;
 
           // pengecekan read set
           for (auto&& item : txn2->readset_) {
-            if (txn2->occ_start_time_ < storage_->Timestamp(item)) validate = false;
+            if (txn2->occ_start_time_ < storage_->Timestamp(item)) {
+              validate = false;
+              break;
+            }
           }
 
           // pengecekan write set
           for (auto&& item : txn2->writeset_) {
-            if (txn2->occ_start_time_ < storage_->Timestamp(item)) validate = false;
+            if (txn2->occ_start_time_ < storage_->Timestamp(item)) {
+              validate = false;
+              break;
+            }
           }
 
           // Write phase (commit/restart)
