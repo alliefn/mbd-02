@@ -1,36 +1,55 @@
-import storage as strg
+from storage import *
+from element import *
 import time
 
 class MVCC :
-    def __init__(self) :
+    def __init__(self):
+        '''
+            Inisialisasi kelas MVCC
+        '''
         return
 
-    def getTimestampNow(self) :
-        return time.time()
+    def setReadTimestampNow(self, i, timestamp, storage):
+        '''
+            Ubah read timestamp dari suatu transaksi
+        '''
+        storage.data[i].readTS = timestamp
 
-    def setTimestampNow(self, key, timestamp, storage : strg) :
-        storage.setdata[key]['timestamp'] = timestamp
+    def setWriteTimestampNow(self, i, timestamp, storage):
+        '''
+            Ubah read timestamp dari suatu transaksi
+        '''
+        storage.data[i].writeTS = timestamp
 
-    def read(self, key, value, storage : strg, timestamp) :
-        """ timestamp = self.getTimestampNow() """
-        if (storage.setdata[key]['timestamp'] > timestamp) :
-            # rollback transaction
-            
-            # reject operation
-            return False
-        else :
-            value = storage.setdata[key]['value']
-            self.setTimestampNow(key, timestamp, storage)
+    def read(self, key, nilai, storage, timestamp):
+        '''
+            Method untuk menerapkan aturan
+            pembacaan MVCC
+        '''
+
+        idx = storage.findBiggestwriteTS(timestamp,key)
+        nilai = storage.data[idx].val
+        if (storage.data[idx].readTS > timestamp): # R-TS(Qk) > TS(Ti)
+            return True
+        else:
+            self.setReadTimestampNow(idx, timestamp, storage)
             return True
     
-    def write(self, key, value, storage : strg, timestamp) :
-        """ timestamp = self.getTimestampNow() """
-        if (storage.setdata[key]['timestamp'] > timestamp) :
-            # rollback transaction
-            
-            # reject operation
+    def write(self, key, nilai, storage, timestamp):
+        '''
+            Method untuk menerapkan aturan
+            penulisan MVCC
+        '''
+        idx = storage.findBiggestwriteTS(timestamp,key)
+        if (storage.data[idx].readTS > timestamp): # R-TS(Qk) > TS(Ti)
+            # Rollback Ti
             return False
         else :
-            storage.setdata[key]['value'] = value
-            self.setTimestampNow(key, timestamp, storage)
+            if (storage.data[idx].writeTS == timestamp): # TS(Ti) = W-TS(Qk)
+                # Overwrite konten Qk
+                storage.data[idx].val = nilai
+            else:
+                # Create a new version Qi of Q
+                latestVer = storage.findLatestVersion(key) + 1
+                storage.addElement(key,nilai,timestamp,timestamp,latestVer)
             return True
